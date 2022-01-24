@@ -6,8 +6,6 @@ from typing import List, Iterable, Tuple, Callable
 import nltk
 import num2words
 import numpy as np
-from nltk.corpus import stopwords
-from nltk.stem import WordNetLemmatizer
 
 NGRAM_SIZE = 3
 
@@ -37,14 +35,6 @@ def is_punctuation(word: str) -> bool:
 
 def cleanup_punctuation(words: List[str]) -> List[str]:
     return [w for w in words if w.isalpha()]
-
-
-def cleanup_stopwords(words: List[str]) -> List[str]:
-    return [w for w in words if w not in stopwords.words('english')]
-
-
-def stem_words(words: List[str], lemmatizer: WordNetLemmatizer) -> List[str]:
-    return [lemmatizer.lemmatize(w) for w in words]
 
 
 def relative_distance(word_1: str, word_2: str) -> float:
