@@ -1,7 +1,7 @@
 import math
 import string
 import time
-from typing import List, Iterable, Tuple
+from typing import List, Iterable, Tuple, Callable
 
 import nltk
 import num2words
@@ -65,14 +65,14 @@ def similarity_local(xs: List[str], ys: List[str]) -> float:
 
 
 def similarity_intermediate(xs: List[List[str]], pool: List[List[str]]) -> List[Tuple[float, List[str], List[str]]]:
-    matches: List[Tuple[float, List[str], List[str]]] = []
+    similarities_best: List[Tuple[float, List[str], List[str]]] = []
     for i in range(len(xs)):
         x = xs[i]
         similarities = [(similarity_local(x, y), y) for y in pool]
         if len(similarities) > 0:
             best_sim, best_ngram = max(similarities, key=lambda s: s[0])
-            matches.append((best_sim, x, best_ngram))
-    return matches
+            similarities_best.append((best_sim, x, best_ngram))
+    return similarities_best
 
 
 def similarity_reified(xs: List[List[str]], ys: List[List[str]]) -> List[Tuple[float, List[str], List[str]]]:
@@ -130,54 +130,56 @@ def similarity_by_word(
     return words_similarity
 
 
-def compute_ngram_similarity_fast(expected: str, tested: str, ngram_size: int) -> list[tuple[float, list[str]]]:
+def _compute_ngram_similarity(
+        expected: str,
+        tested: str,
+        ngram_size: int,
+        method: Callable[[List[List[str]], List[List[str]]], List[Tuple[float, List[str], List[str]]]]
+) -> list[tuple[float, list[str]]]:
     expected_cleaned = highlight_punctuation(expected.lower())
     tested_cleaned = highlight_punctuation(tested.lower())
     expected_words = cleanup_punctuation(convert_numbers(nltk.word_tokenize(expected_cleaned)))
     tested_words = cleanup_punctuation(convert_numbers(nltk.word_tokenize(tested_cleaned)))
     ngrams_expected = list(nltk.ngrams(expected_words, ngram_size))
     ngrams_tested = list(nltk.ngrams(tested_words, ngram_size))
-    matched = similarity_intermediate(ngrams_expected, ngrams_tested)
+    matched = method(ngrams_expected, ngrams_tested)
     full = similarity_full(ngrams_expected, matched)
     return full
+
+
+def compute_ngram_similarity_fast(expected: str, tested: str, ngram_size: int) -> list[tuple[float, list[str]]]:
+    return _compute_ngram_similarity(expected, tested, ngram_size, similarity_intermediate)
 
 
 def compute_ngram_similarity_full(expected: str, tested: str, ngram_size: int) -> list[tuple[float, list[str]]]:
-    expected_cleaned = highlight_punctuation(expected.lower())
-    tested_cleaned = highlight_punctuation(tested.lower())
-    expected_words = cleanup_punctuation(convert_numbers(nltk.word_tokenize(expected_cleaned)))
-    tested_words = cleanup_punctuation(convert_numbers(nltk.word_tokenize(tested_cleaned)))
-    ngrams_expected = list(nltk.ngrams(expected_words, ngram_size))
-    ngrams_tested = list(nltk.ngrams(tested_words, ngram_size))
-    matched = similarity_reified(ngrams_expected, ngrams_tested)
-    full = similarity_full(ngrams_expected, matched)
-    return full
+    return _compute_ngram_similarity(expected, tested, ngram_size, similarity_reified)
 
 
-original = "TransPerfect improves chatbot performance up to 30% compared to a translation approach. We’re able to " \
-           "remove bias and incorporate diversity and nuance for target markets. Let’s have a call with a Solution " \
-           "Engineer, who can better walk through our process with you. Is Tuesday morning or afternoon better for " \
-           "you?"
-recognized = "Transparent effect improves childhood performance up to 30% compared to a translation approach. Were " \
-             "able to remove barriers and incorporate diversity and nuance for target markets. Let's say we're " \
-             "solution Engineer who can better walk through a process with you. Is choose a morning or afternoon. " \
-             "Better for you. "
+if __name__ == '__main__':
+    original = "TransPerfect improves chatbot performance up to 30% compared to a translation approach. We’re able to " \
+               "remove bias and incorporate diversity and nuance for target markets. Let’s have a call with a Solution " \
+               "Engineer, who can better walk through our process with you. Is Tuesday morning or afternoon better for " \
+               "you?"
+    recognized = "Transparent effect improves childhood performance up to 30% compared to a translation approach. Were " \
+                 "able to remove barriers and incorporate diversity and nuance for target markets. Let's say we're " \
+                 "solution Engineer who can better walk through a process with you. Is choose a morning or afternoon. " \
+                 "Better for you. "
 
-start_time = time.time_ns()
-similarity_all = compute_ngram_similarity_full(recognized, original, NGRAM_SIZE)
+    start_time = time.time_ns()
+    ngram_similarity = compute_ngram_similarity_full(recognized, original, NGRAM_SIZE)
 
-print('All ngrams:', similarity_all)
+    print('All ngrams:', ngram_similarity)
 
-similarity_extended = similarity_extend(similarity_all, NGRAM_SIZE)
-similarity_words = similarity_by_word(similarity_extended, NGRAM_SIZE)
-incorrect_words = [(w, c) for w, c in similarity_words if c < 0.8]
+    similarity_extended = similarity_extend(ngram_similarity, NGRAM_SIZE)
+    similarity_words = similarity_by_word(similarity_extended, NGRAM_SIZE)
+    incorrect_words = [(w, c) for w, c in similarity_words if c < 0.8]
 
-print('N-Gram Coefficients:', similarity_extended)
-print('Word Coefficients:', similarity_words)
+    print('N-Gram Coefficients:', similarity_extended)
+    print('Word Coefficients:', similarity_words)
 
-print('Avg By N-Grams:', np.average([m for m, *_ in similarity_all]))
-print('Avg By Word:', np.average([c for _, c in similarity_words]))
+    print('Avg By N-Grams:', np.average([m for m, *_ in ngram_similarity]))
+    print('Avg By Word:', np.average([c for _, c in similarity_words]))
 
-print('Missed words:', incorrect_words)
+    print('Missed words:', incorrect_words)
 
-print(f'Execution takes {(time.time_ns() - start_time) / 1000000} ms')
+    print(f'Execution takes {(time.time_ns() - start_time) / 1000000} ms')
