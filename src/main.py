@@ -1,6 +1,7 @@
 import math
 import string
-from typing import List, Iterable
+import time
+from typing import List, Iterable, Tuple
 
 import nltk
 import num2words
@@ -55,37 +56,6 @@ def best_distance(word: str, words: Iterable[str]) -> float:
     return max(distances)
 
 
-original = "TransPerfect improves chatbot performance up to 30% compared to a translation approach. We’re able to " \
-           "remove bias and incorporate diversity and nuance for target markets. Let’s have a call with a Solution " \
-           "Engineer, who can better walk through our process with you. Is Tuesday morning or afternoon better for " \
-           "you? "
-recognized = "Transparent effect improves childhood performance up to 30% compared to a translation approach. Were " \
-             "able to remove barriers and incorporate diversity and nuance for target markets. Let's say we're " \
-             "solution Engineer who can better walk through a process with you. Is choose a morning or afternoon. " \
-             "Better for you. "
-
-original = 'up to 3 hello my name hello world asdads a sf asfga sdafdfgas'
-recognized = 'up to 3 up to 3'
-
-original_cleaned = highlight_punctuation(original.lower())
-recognized_cleaned = highlight_punctuation(recognized.lower())
-
-lemmatizer = WordNetLemmatizer()
-
-original_words = stem_words(
-    words=cleanup_punctuation(convert_numbers(nltk.word_tokenize(original_cleaned))),
-    lemmatizer=lemmatizer)
-recognized_words = stem_words(
-    words=cleanup_punctuation(convert_numbers(nltk.word_tokenize(recognized_cleaned))),
-    lemmatizer=lemmatizer)
-
-original_ngrams = list(nltk.ngrams(original_words, NGRAM_SIZE))
-recognized_ngrams = list(nltk.ngrams(recognized_words, NGRAM_SIZE))
-
-print(original_ngrams)
-print(recognized_ngrams)
-
-
 def similarity_local(xs: List[str], ys: List[str]) -> float:
     if len(xs) != len(ys):
         return 0
@@ -94,45 +64,120 @@ def similarity_local(xs: List[str], ys: List[str]) -> float:
     # , weights=[len(x) for x in xs]) TODO: Investigate why result aren't isomorphic with weights
 
 
-matches = []
-pool = recognized_ngrams.copy()
-for i in range(len(original_ngrams)):
-    orig = original_ngrams[i]
-    similarities = [(similarity_local(orig, recog), recog) for recog in pool]
-    if len(similarities) > 0:
-        best_c, best_ng = max(similarities, key=lambda x: x[0])
-        matches.append((best_c, orig, best_ng))
-        pool.remove(best_ng)
-        print(f'N-gram: {orig}; Similar: {(best_c, best_ng)}; Pool: {pool}')
+def similarity_intermediate(xs: List[List[str]], pool: List[List[str]]) -> List[Tuple[float, List[str], List[str]]]:
+    matches: List[Tuple[float, List[str], List[str]]] = []
+    for i in range(len(xs)):
+        x = xs[i]
+        similarities = [(similarity_local(x, y), y) for y in pool]
+        if len(similarities) > 0:
+            best_sim, best_ngram = max(similarities, key=lambda s: s[0])
+            matches.append((best_sim, x, best_ngram))
+    return matches
 
-# for ot in original_ngrams:
-#     similarities = [(similarity_local(ot, rt), rt) for rt in recognized_ngrams]
-#     best = max(similarities, key=lambda x: x[0])
-#     print(f'N-gram: {ot}; Similar: {best}')
-#     matches.append((best[0], ot, best[1]))
 
-print('Matches:', matches)
+def similarity_reified(xs: List[List[str]], ys: List[List[str]]) -> List[Tuple[float, List[str], List[str]]]:
+    similarity_matched: List[Tuple[float, List[str], List[str]]] = []
+    pool_original = xs.copy()
+    pool_recognized = ys.copy()
+    while pool_recognized and pool_original:
+        intermediate = similarity_intermediate(pool_original, pool_recognized)
+        best_sim, original_ngram, recognized_ngram = max(intermediate, key=lambda x: x[0])
+        similarity_matched.append((best_sim, original_ngram, recognized_ngram))
+        pool_recognized.remove(recognized_ngram)
+        pool_original.remove(original_ngram)
+    return similarity_matched
 
-CONTEXT_PRE = math.ceil(NGRAM_SIZE / 2)
-CONTEXT_POST = NGRAM_SIZE - CONTEXT_PRE
-coeffs = [(mc, mo) for mc, mo, *_ in matches]
-(e_mc, e_mo) = coeffs[0]
-extension = []
-for i in range(CONTEXT_PRE):
-    prepend = tuple('' for _ in range(CONTEXT_PRE - i))
-    extension += [(e_mc, (prepend + e_mo)[:NGRAM_SIZE])]
-coeffs = extension + coeffs
 
-print('N-Gram Coefficients:', coeffs)
+def similarity_full(
+        xs: List[List[str]],
+        matched: List[Tuple[float, List[str], List[str]]]
+) -> List[Tuple[float, List[str]]]:
+    similarities: List[Tuple[float, List[str]]] = []
+    for original_ngram in xs:
+        similar = (0.0, original_ngram)
+        for (best_sim, best_original_ngram, _) in matched:
+            if original_ngram == best_original_ngram:
+                similar = (best_sim, best_original_ngram)
+                break
+        similarities.append(similar)
+    return similarities
 
-word_coeffs = []
-for i in range(CONTEXT_PRE, len(coeffs) - (CONTEXT_POST - 1)):
-    context = coeffs[i - CONTEXT_PRE:i + CONTEXT_POST]
-    avg = np.max([c for c, *_ in context])
-    word, *_ = coeffs[i][1]
-    word_coeffs += [(word, avg)]
 
-print('Word Coefficients:', word_coeffs)
+def similarity_extend(similarities: list[tuple[float, list[str]]], ngram_size: int) -> list[tuple[float, list[str]]]:
+    prepend_size = math.ceil(ngram_size / 2)
+    coeffs = [(mc, list(mo)) for mc, mo in similarities]
+    (e_mc, e_mo) = coeffs[0]
+    extension = []
+    for i in range(prepend_size):
+        prepend = ['' for _ in range(prepend_size - i)]
+        extension += [(e_mc, (prepend + e_mo)[:ngram_size])]
+    coeffs = extension + coeffs
+    return coeffs
 
-print('By N-Grams:', np.average([m for m, *_ in matches]))
-print('By Word:', np.average([c for _, c in word_coeffs]))
+
+def similarity_by_word(
+        extended: list[tuple[float, list[str]]],
+        ngram_size: int
+) -> list[tuple[str, float]]:
+    prepend_size = math.ceil(ngram_size / 2)
+    append_size = ngram_size - prepend_size
+    words_similarity: list[tuple[str, float]] = []
+    for i in range(prepend_size, len(extended) - (append_size - 1)):
+        context = extended[i - prepend_size:i + append_size]
+        avg = np.max([c for c, *_ in context])
+        word, *_ = extended[i][1]
+        words_similarity += [(word, avg)]
+    return words_similarity
+
+
+def compute_ngram_similarity_fast(expected: str, tested: str, ngram_size: int) -> list[tuple[float, list[str]]]:
+    expected_cleaned = highlight_punctuation(expected.lower())
+    tested_cleaned = highlight_punctuation(tested.lower())
+    expected_words = cleanup_punctuation(convert_numbers(nltk.word_tokenize(expected_cleaned)))
+    tested_words = cleanup_punctuation(convert_numbers(nltk.word_tokenize(tested_cleaned)))
+    ngrams_expected = list(nltk.ngrams(expected_words, ngram_size))
+    ngrams_tested = list(nltk.ngrams(tested_words, ngram_size))
+    matched = similarity_intermediate(ngrams_expected, ngrams_tested)
+    full = similarity_full(ngrams_expected, matched)
+    return full
+
+
+def compute_ngram_similarity_full(expected: str, tested: str, ngram_size: int) -> list[tuple[float, list[str]]]:
+    expected_cleaned = highlight_punctuation(expected.lower())
+    tested_cleaned = highlight_punctuation(tested.lower())
+    expected_words = cleanup_punctuation(convert_numbers(nltk.word_tokenize(expected_cleaned)))
+    tested_words = cleanup_punctuation(convert_numbers(nltk.word_tokenize(tested_cleaned)))
+    ngrams_expected = list(nltk.ngrams(expected_words, ngram_size))
+    ngrams_tested = list(nltk.ngrams(tested_words, ngram_size))
+    matched = similarity_reified(ngrams_expected, ngrams_tested)
+    full = similarity_full(ngrams_expected, matched)
+    return full
+
+
+original = "TransPerfect improves chatbot performance up to 30% compared to a translation approach. We’re able to " \
+           "remove bias and incorporate diversity and nuance for target markets. Let’s have a call with a Solution " \
+           "Engineer, who can better walk through our process with you. Is Tuesday morning or afternoon better for " \
+           "you?"
+recognized = "Transparent effect improves childhood performance up to 30% compared to a translation approach. Were " \
+             "able to remove barriers and incorporate diversity and nuance for target markets. Let's say we're " \
+             "solution Engineer who can better walk through a process with you. Is choose a morning or afternoon. " \
+             "Better for you. "
+
+start_time = time.time_ns()
+similarity_all = compute_ngram_similarity_full(recognized, original, NGRAM_SIZE)
+
+print('All ngrams:', similarity_all)
+
+similarity_extended = similarity_extend(similarity_all, NGRAM_SIZE)
+similarity_words = similarity_by_word(similarity_extended, NGRAM_SIZE)
+incorrect_words = [(w, c) for w, c in similarity_words if c < 0.8]
+
+print('N-Gram Coefficients:', similarity_extended)
+print('Word Coefficients:', similarity_words)
+
+print('Avg By N-Grams:', np.average([m for m, *_ in similarity_all]))
+print('Avg By Word:', np.average([c for _, c in similarity_words]))
+
+print('Missed words:', incorrect_words)
+
+print(f'Execution takes {(time.time_ns() - start_time) / 1000000} ms')
