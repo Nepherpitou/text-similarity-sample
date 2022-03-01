@@ -66,11 +66,9 @@ def best_distance(word: str, words: Iterable[str]) -> float:
 def similarity_local(xs: List[str], ys: List[str]) -> float:
     if len(xs) != len(ys):
         return 0
-    if xs == ys:
-        return 1.0
     # distances = [1 - float(nltk.edit_distance(x, y)) / max(len(x), len(y)) for x, y in zip(xs, ys)]
     # distances = [1 - nltk.jaccard_distance(set(x), set(y)) for x, y in zip(xs, ys)]
-    distances = [distance.jaro_similarity(x, y) for x, y in zip(xs, ys)]
+    distances = [1.0 if x == y else distance.jaro_similarity(x, y) for x, y in zip(xs, ys)]
     # print(distances, xs, ys)
     return np.average(distances)
     # , weights=[len(x) for x in xs]) TODO: Investigate why result aren't isomorphic with weights
