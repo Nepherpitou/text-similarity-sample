@@ -66,6 +66,8 @@ def best_distance(word: str, words: Iterable[str]) -> float:
 def similarity_local(xs: List[str], ys: List[str]) -> float:
     if len(xs) != len(ys):
         return 0
+    if xs == ys:
+        return 1.0
     # distances = [1 - float(nltk.edit_distance(x, y)) / max(len(x), len(y)) for x, y in zip(xs, ys)]
     # distances = [1 - nltk.jaccard_distance(set(x), set(y)) for x, y in zip(xs, ys)]
     distances = [distance.jaro_similarity(x, y) for x, y in zip(xs, ys)]
@@ -123,8 +125,6 @@ if __name__ == '__main__':
              "applicable guidelines and laws? Absolutely! I will run a quick automated assessment to see how things " \
              "are now.  So, can you get a few times that work for you and your end client later this week? "
     reference = "So can you will get a few time to speak with you and your client? Yes, lets you do this call. Ha-ha."
-    # reference = "string string exepupe me right now"
-    # sample = "string tank execute me rightenous"
     start_time = time.time_ns()
 
     reference_words = prepare_words(reference)
